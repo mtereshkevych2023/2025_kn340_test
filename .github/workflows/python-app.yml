@@ -1,0 +1,173 @@
+# This workflow will install Python dependencies, run tests and lint with a single version of Python
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
+
+name: Run Tests
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+    # inputs:
+    #   python-version:
+    #     description: 'Python version to use'
+    #     required: false
+    #     default: '3.13'
+  schedule:
+    - cron: '0 7 * * tue'  # Runs at 07:00 every Tuesday
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+
+
+jobs:
+  start:
+    name: Start Job
+    runs-on: ubuntu-latest
+    steps:
+    - name: Echo commit info
+      if: github.event_name == 'push' || github.event_name == 'pull_request'
+      run: echo "Запуск з назвою коміту - ${{ github.event.head_commit.message }}"
+    
+    - name: Echo manual trigger info
+      if: github.event_name == 'workflow_dispatch'
+      run: echo "Action запустив користувач - ${{ github.actor }}"
+  
+  run-linters:
+    needs: start # Це створює залежність від кропки "start" і відображається як граф
+    name: Start running Linters
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python "3.13"
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.13"
+    - name: Setup Poetry
+      uses: Gr1N/setup-poetry@v9
+    - name: Install dependencies
+      working-directory: ./lab
+      env: 
+        POETRY_VIRTUALENVS_CREATE: false
+      run: |
+        python -m pip install --upgrade pip
+        poetry install --with dev
+    - name: Lint with flake8
+      working-directory: ./lab
+      run: |
+        # stop the build if there are Python syntax errors or undefined names
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    - name: Run black check
+      working-directory: ./lab
+      run: |
+        black --check .
+    
+  run-tests:
+    needs: start
+    name: Start running Tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python "3.13"
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.13"
+    - name: Setup Poetry
+      uses: Gr1N/setup-poetry@v9        
+    - name: Install dependencies
+      working-directory: ./lab
+      env: 
+        POETRY_VIRTUALENVS_CREATE: false
+      run: |
+        pwd
+        python -m pip install --upgrade pip
+        poetry install --with dev
+    - name: Test with pytest
+      working-directory: ./lab
+      run: |
+        pytest --cov --junitxml=junit.xml -o junit_family=legacy -v
+    # генеруємо звіт
+    - name: Generate Report
+      working-directory: ./lab
+      run: |
+        #запускаємо через ЮнітТести
+        #coverage run -m unittest -v
+        #або через ПайТест
+        coverage run -m pytest -v
+        coverage xml
+    - name: Upload test results to Codecov
+      if: ${{ !cancelled() }}
+      uses: codecov/test-results-action@v1
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+    # відсилаємо його в Coverage
+    - name: Upload Coverage to Codecov
+      uses: codecov/codecov-action@v5
+      with:
+        directory: ./lab/
+        token: ${{ secrets.CODECOV_TOKEN }}
+    
+    # - name: Report workflow status to issues
+    #   if: always()
+    #   uses: actions/github-script@v7
+    #   with:
+    #     script: |
+    #       const workflowStatus = '${{ job.status }}';
+    #       const workflowName = '${{ github.workflow }}';
+    #       const runId = '${{ github.run_id }}';
+    #       const runUrl = `https://github.com/${{ github.repository }}/actions/runs/${runId}`;
+    #       const sha = '${{ github.sha }}';
+    #       const shortSha = sha.substring(0, 7);
+          
+    #       // Get associated issues from commit messages or PR
+    #       let issueNumbers = [];
+          
+    #       // If this is a PR, get the PR number
+    #       if (context.payload.pull_request) {
+    #         issueNumbers.push(context.payload.pull_request.number);
+    #       }
+          
+    #       // Search for issue references in commit messages
+    #       const commits = await github.rest.repos.listCommits({
+    #         owner: context.repo.owner,
+    #         repo: context.repo.repo,
+    #         sha: sha,
+    #         per_page: 1
+    #       });
+          
+    #       if (commits.data.length > 0) {
+    #         const commitMessage = commits.data[0].commit.message;
+    #         const issueRegex = /#(\d+)/g;
+    #         let match;
+    #         while ((match = issueRegex.exec(commitMessage)) !== null) {
+    #           issueNumbers.push(parseInt(match[1]));
+    #         }
+    #       }
+          
+    #       // Create status comment on each related issue
+    #       const statusEmoji = workflowStatus === 'success' ? '✅' : '❌';
+    #       const statusText = workflowStatus === 'success' ? 'passed' : 'failed';
+          
+    #       for (const issueNumber of issueNumbers) {
+    #         try {
+    #           await github.rest.issues.createComment({
+    #             owner: context.repo.owner,
+    #             repo: context.repo.repo,
+    #             issue_number: issueNumber,
+    #             body: `${statusEmoji} **${workflowName}** workflow ${statusText}\n\n` +
+    #                   `- Commit: ${shortSha}\n` +
+    #                   `- Status: ${workflowStatus}\n` +
+    #                   `- [View workflow run](${runUrl})`
+    #           });
+    #           console.log(`Posted status to issue #${issueNumber}`);
+    #         } catch (error) {
+    #           console.log(`Could not post to issue #${issueNumber}: ${error.message}`);
+    #         }
+    #       }
